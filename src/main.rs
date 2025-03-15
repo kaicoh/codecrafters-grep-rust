@@ -1,28 +1,27 @@
-use std::env;
+use clap::Parser;
+use codecrafters_grep::{match_pattern, Args, Result};
 use std::io;
 use std::process;
 
-fn match_pattern(input_line: &str, pattern: &str) -> bool {
-    if pattern.chars().count() == 1 {
-        return input_line.contains(pattern);
-    } else {
-        panic!("Unhandled pattern: {}", pattern)
+// Usage: echo <input_text> | your_program.sh -E <pattern>
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        process::exit(1);
     }
 }
 
-// Usage: echo <input_text> | your_program.sh -E <pattern>
-fn main() {
-    if env::args().nth(1).unwrap() != "-E" {
-        println!("Expected first argument to be '-E'");
+fn run() -> Result<()> {
+    let Args { extend, pattern } = Args::parse();
+
+    if !extend {
+        eprintln!("Expected first argument to be '-E'");
         process::exit(1);
     }
 
-    let pattern = env::args().nth(2).unwrap();
-    let mut input_line = String::new();
+    let input = io::stdin().lock();
 
-    io::stdin().read_line(&mut input_line).unwrap();
-
-    if match_pattern(&input_line, &pattern) {
+    if match_pattern(input, &pattern)? {
         process::exit(0)
     } else {
         process::exit(1)
