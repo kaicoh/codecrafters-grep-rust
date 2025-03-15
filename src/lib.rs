@@ -23,6 +23,7 @@ pub fn match_pattern<R: BufRead>(buf: R, pattern: &str) -> Result<bool> {
 fn search(line: &str, pattern: &str) -> bool {
     match pattern {
         "\\d" => line.chars().any(|c| c.is_ascii_digit()),
+        "\\w" => line.chars().any(|c| c.is_ascii_alphanumeric() || c == '_'),
         _ => line.contains(pattern),
     }
 }
