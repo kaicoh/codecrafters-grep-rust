@@ -24,6 +24,10 @@ fn search(line: &str, pattern: &str) -> bool {
     match pattern {
         "\\d" => line.chars().any(|c| c.is_ascii_digit()),
         "\\w" => line.chars().any(|c| c.is_ascii_alphanumeric() || c == '_'),
+        p if p.starts_with("[") && p.ends_with("]") => {
+            let group = &p[1..p.len() - 1];
+            group.chars().any(|c| search(line, format!("{c}").as_str()))
+        }
         _ => line.contains(pattern),
     }
 }
