@@ -4,11 +4,14 @@ use pattern::{parse_pattern, Pattern};
 
 #[derive(Debug, PartialEq)]
 pub struct Regex {
+    start_anchor: bool,
     patterns: Vec<Pattern>,
 }
 
 impl Regex {
     pub fn new(expr: &str) -> Self {
+        let start_anchor = expr.starts_with('^');
+        let expr = if start_anchor { &expr[1..] } else { expr };
         let (patterns, rest) = parse_pattern(expr);
 
         // TODO:
@@ -17,22 +20,28 @@ impl Regex {
             panic!("Cannot parse regexp completely!");
         }
 
-        Self { patterns }
+        Self {
+            start_anchor,
+            patterns,
+        }
     }
 
     pub fn is_match(&self, s: &str) -> bool {
         let mut cur_pos: usize = 0;
 
-        if let Some(pat) = self.patterns.first() {
-            while pat.match_size(&s[cur_pos..]).is_none() {
-                cur_pos += 1;
+        if !self.start_anchor {
+            // Search the first position
+            if let Some(pat) = self.patterns.first() {
+                while pat.match_size(&s[cur_pos..]).is_none() {
+                    cur_pos += 1;
 
-                if cur_pos >= s.len() {
-                    return false;
+                    if cur_pos >= s.len() {
+                        return false;
+                    }
                 }
+            } else {
+                return false;
             }
-        } else {
-            return false;
         }
 
         for pat in self.patterns.iter() {
@@ -108,5 +117,12 @@ mod tests {
         assert!(r.is_match("3 dogs"));
         assert!(r.is_match("4 cats"));
         assert!(!r.is_match("1 dog"));
+    }
+
+    #[test]
+    fn it_matches_with_start_anchor() {
+        let r = Regex::new("^log");
+        assert!(r.is_match("logs"));
+        assert!(!r.is_match("slog"));
     }
 }
