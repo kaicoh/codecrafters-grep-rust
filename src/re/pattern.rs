@@ -3,6 +3,7 @@ pub enum Pattern {
     Lit(char),
     AlphaNumeric,
     Digit,
+    Wildcard,
     PGroup(Vec<Pattern>),
     NGroup(Vec<Pattern>),
     MoreThanZero(Box<Pattern>),
@@ -36,6 +37,10 @@ impl Pattern {
                 '^' => Some((MaybePattern::NGroupOpen, &expr[2..])),
                 _ => Some((MaybePattern::PGroupOpen, &expr[1..])),
             },
+            '.' => {
+                let pat = Pattern::Wildcard;
+                Some((MaybePattern::Itself(pat), &expr[1..]))
+            }
             ']' => Some((MaybePattern::GroupClose, &expr[1..])),
             '+' => Some((MaybePattern::MoreThanOne, &expr[1..])),
             '*' => Some((MaybePattern::MoreThanZero, &expr[1..])),
@@ -63,6 +68,7 @@ impl Pattern {
             Self::Digit => chars
                 .next()
                 .and_then(|ch| if ch.is_ascii_digit() { Some(1) } else { None }),
+            Self::Wildcard => chars.next().map(|_| 1),
             Self::PGroup(pats) => pats.iter().filter_map(|pat| pat.match_size(s)).next(),
             Self::NGroup(pats) => {
                 if pats.iter().all(|pat| pat.match_size(s).is_none()) {
@@ -190,6 +196,14 @@ mod tests {
         let expr = "\\d";
         let (patterns, rest) = parse_pattern(expr);
         assert_eq!(patterns, vec![Pattern::Digit]);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn it_parses_wildcard() {
+        let expr = ".";
+        let (patterns, rest) = parse_pattern(expr);
+        assert_eq!(patterns, vec![Pattern::Wildcard]);
         assert_eq!(rest, "");
     }
 

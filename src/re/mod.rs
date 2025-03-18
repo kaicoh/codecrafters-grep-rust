@@ -104,6 +104,13 @@ mod tests {
     }
 
     #[test]
+    fn it_matches_wildcard() {
+        let r = Regex::new("d.g");
+        assert!(r.is_match("dog"));
+        assert!(!r.is_match("cog"));
+    }
+
+    #[test]
     fn it_matches_positive_character_group() {
         let r = Regex::new("[abc]");
         assert!(r.is_match("apple"));
