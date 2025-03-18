@@ -55,7 +55,7 @@ impl Regex {
         }
 
         for pat in self.patterns.iter() {
-            if cur_pos >= s.len() {
+            if cur_pos > s.len() {
                 return false;
             }
 
@@ -145,5 +145,13 @@ mod tests {
         let r = Regex::new("dog$");
         assert!(r.is_match("dog"));
         assert!(!r.is_match("dogs"));
+    }
+
+    #[test]
+    fn it_matches_zero_or_one_times() {
+        let r = Regex::new("dogs?");
+        assert!(r.is_match("dog"));
+        assert!(r.is_match("dogs"));
+        assert!(!r.is_match("cat"));
     }
 }

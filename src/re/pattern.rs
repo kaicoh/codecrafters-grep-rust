@@ -7,6 +7,7 @@ pub enum Pattern {
     NGroup(Vec<Pattern>),
     MoreThanZero(Box<Pattern>),
     MoreThanOne(Box<Pattern>),
+    ZeroOrOne(Box<Pattern>),
 }
 
 impl Pattern {
@@ -38,6 +39,7 @@ impl Pattern {
             ']' => Some((MaybePattern::GroupClose, &expr[1..])),
             '+' => Some((MaybePattern::MoreThanOne, &expr[1..])),
             '*' => Some((MaybePattern::MoreThanZero, &expr[1..])),
+            '?' => Some((MaybePattern::ZeroOrOne, &expr[1..])),
             c => {
                 let pat = Pattern::Lit(c);
                 Some((MaybePattern::Itself(pat), &expr[1..]))
@@ -93,6 +95,10 @@ impl Pattern {
 
                 Some(acc)
             }
+            Self::ZeroOrOne(pat) => {
+                let size = pat.match_size(s).unwrap_or(0);
+                Some(size)
+            }
         }
     }
 }
@@ -102,6 +108,7 @@ enum MaybePattern {
     Itself(Pattern),
     MoreThanZero,
     MoreThanOne,
+    ZeroOrOne,
     PGroupOpen,
     NGroupOpen,
     GroupClose,
@@ -128,6 +135,13 @@ pub fn parse_pattern(expr: &str) -> (Vec<Pattern>, &str) {
                 // handle when pop method returns None
                 if let Some(p) = patterns.pop() {
                     patterns.push(Pattern::MoreThanOne(Box::new(p)));
+                }
+            }
+            MaybePattern::ZeroOrOne => {
+                // TODO:
+                // handle when pop method returns None
+                if let Some(p) = patterns.pop() {
+                    patterns.push(Pattern::ZeroOrOne(Box::new(p)));
                 }
             }
             MaybePattern::PGroupOpen => {
@@ -235,6 +249,25 @@ mod tests {
         let expr = "[abc]*";
         let (patterns, rest) = parse_pattern(expr);
         let expected = vec![Pattern::MoreThanZero(Box::new(Pattern::PGroup(vec![
+            Pattern::Lit('a'),
+            Pattern::Lit('b'),
+            Pattern::Lit('c'),
+        ])))];
+        assert_eq!(patterns, expected);
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn it_parses_zero_or_one_pattern() {
+        let expr = "\\w?";
+        let (patterns, rest) = parse_pattern(expr);
+        let expected = vec![Pattern::ZeroOrOne(Box::new(Pattern::AlphaNumeric))];
+        assert_eq!(patterns, expected);
+        assert_eq!(rest, "");
+
+        let expr = "[abc]?";
+        let (patterns, rest) = parse_pattern(expr);
+        let expected = vec![Pattern::ZeroOrOne(Box::new(Pattern::PGroup(vec![
             Pattern::Lit('a'),
             Pattern::Lit('b'),
             Pattern::Lit('c'),
