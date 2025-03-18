@@ -5,6 +5,7 @@ use pattern::{parse_pattern, Pattern};
 #[derive(Debug, PartialEq)]
 pub struct Regex {
     start_anchor: bool,
+    end_anchor: bool,
     patterns: Vec<Pattern>,
 }
 
@@ -12,6 +13,14 @@ impl Regex {
     pub fn new(expr: &str) -> Self {
         let start_anchor = expr.starts_with('^');
         let expr = if start_anchor { &expr[1..] } else { expr };
+
+        let end_anchor = expr.ends_with('$');
+        let expr = if end_anchor {
+            &expr[..expr.len() - 1]
+        } else {
+            expr
+        };
+
         let (patterns, rest) = parse_pattern(expr);
 
         // TODO:
@@ -22,6 +31,7 @@ impl Regex {
 
         Self {
             start_anchor,
+            end_anchor,
             patterns,
         }
     }
@@ -57,6 +67,10 @@ impl Regex {
                     return false;
                 }
             }
+        }
+
+        if self.end_anchor {
+            return cur_pos == s.len();
         }
 
         true
@@ -124,5 +138,12 @@ mod tests {
         let r = Regex::new("^log");
         assert!(r.is_match("logs"));
         assert!(!r.is_match("slog"));
+    }
+
+    #[test]
+    fn it_matches_with_end_anchor() {
+        let r = Regex::new("dog$");
+        assert!(r.is_match("dog"));
+        assert!(!r.is_match("dogs"));
     }
 }
