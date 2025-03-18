@@ -1,16 +1,18 @@
+mod letter;
 mod pattern;
 
+use letter::Letters;
 use pattern::{parse_pattern, Pattern};
 
 #[derive(Debug, PartialEq)]
-pub struct Regex {
+pub struct Regex<'a> {
     start_anchor: bool,
     end_anchor: bool,
-    patterns: Vec<Pattern>,
+    patterns: Vec<Pattern<'a>>,
 }
 
-impl Regex {
-    pub fn new(expr: &str) -> Self {
+impl<'a> Regex<'a> {
+    pub fn new(expr: &'a str) -> Self {
         let start_anchor = expr.starts_with('^');
         let expr = if start_anchor { &expr[1..] } else { expr };
 
@@ -38,20 +40,16 @@ impl Regex {
 
     pub fn is_match(&self, s: &str) -> bool {
         let mut cur_pos: usize = 0;
+        let mut prev_pat: Option<&Pattern<'a>> = None;
 
         if !self.start_anchor {
             // Search the first position
-            if let Some(pat) = self.patterns.first() {
-                while pat.match_size(&s[cur_pos..]).is_none() {
-                    cur_pos += 1;
-
-                    if cur_pos >= s.len() {
-                        return false;
-                    }
+            cur_pos = match self.patterns.first().and_then(|p| p.search_match_pos(s)) {
+                Some(pos) => pos,
+                None => {
+                    return false;
                 }
-            } else {
-                return false;
-            }
+            };
         }
 
         for pat in self.patterns.iter() {
@@ -59,6 +57,36 @@ impl Regex {
                 return false;
             }
 
+            if pat.evaluate_with_next() {
+                prev_pat = Some(pat);
+                continue;
+            }
+
+            if let Some(prev) = prev_pat.take() {
+                match pat
+                    .search_match_pos(&s[cur_pos..])
+                    .and_then(|bytes| prev.match_size(&s[cur_pos..(cur_pos + bytes)]))
+                {
+                    Some(size) => {
+                        cur_pos += size;
+                    }
+                    None => {
+                        return false;
+                    }
+                }
+            }
+
+            match pat.match_size(&s[cur_pos..]) {
+                Some(size) => {
+                    cur_pos += size;
+                }
+                None => {
+                    return false;
+                }
+            }
+        }
+
+        if let Some(pat) = prev_pat.take() {
             match pat.match_size(&s[cur_pos..]) {
                 Some(size) => {
                     cur_pos += size;
@@ -107,7 +135,14 @@ mod tests {
     fn it_matches_wildcard() {
         let r = Regex::new("d.g");
         assert!(r.is_match("dog"));
+        assert!(r.is_match("dig"));
         assert!(!r.is_match("cog"));
+
+        let r = Regex::new("g.+");
+        assert!(r.is_match("goøö0Ogol"));
+
+        let r = Regex::new("g.+gol");
+        assert!(r.is_match("goøö0Ogol"));
     }
 
     #[test]
