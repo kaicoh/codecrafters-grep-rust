@@ -11,6 +11,7 @@ pub enum Pattern<'a> {
     MoreThanZero(Box<Pattern<'a>>),
     MoreThanOne(Box<Pattern<'a>>),
     ZeroOrOne(Box<Pattern<'a>>),
+    Alternation(Vec<Vec<Pattern<'a>>>),
 }
 
 impl Pattern<'_> {
@@ -96,8 +97,44 @@ impl Pattern<'_> {
                 let size = pat.match_size(s).unwrap_or(0);
                 Some(size)
             }
+            Self::Alternation(pats) => pats
+                .iter()
+                .find_map(|patterns| search_match_size(patterns, s)),
         }
     }
+}
+
+pub fn search_match_size(patterns: &[Pattern], s: &str) -> Option<usize> {
+    let mut cur_pos: usize = 0;
+    let mut prev_pat: Option<&Pattern> = None;
+
+    for pat in patterns {
+        if cur_pos > s.len() {
+            return None;
+        }
+
+        if pat.evaluate_with_next() {
+            prev_pat = Some(pat);
+            continue;
+        }
+
+        if let Some(prev) = prev_pat.take() {
+            let size = pat
+                .search_match_pos(&s[cur_pos..])
+                .and_then(|b| prev.match_size(&s[cur_pos..(cur_pos + b)]))?;
+            cur_pos += size;
+        }
+
+        let size = pat.match_size(&s[cur_pos..])?;
+        cur_pos += size;
+    }
+
+    if let Some(pat) = prev_pat.take() {
+        let size = pat.match_size(&s[cur_pos..])?;
+        cur_pos += size;
+    }
+
+    Some(cur_pos)
 }
 
 #[derive(Debug)]
@@ -109,6 +146,9 @@ enum PatternChar<'a> {
     PGroupOpen,
     NGroupOpen,
     GroupClose,
+    AltOpen,
+    AltClose,
+    AltDelimiter,
 }
 
 impl<'a> PatternChar<'a> {
@@ -146,6 +186,9 @@ impl<'a> PatternChar<'a> {
             "+" => Some((PatternChar::MoreThanOne, letters.tail())),
             "*" => Some((PatternChar::MoreThanZero, letters.tail())),
             "?" => Some((PatternChar::ZeroOrOne, letters.tail())),
+            "(" => Some((PatternChar::AltOpen, letters.tail())),
+            ")" => Some((PatternChar::AltClose, letters.tail())),
+            "|" => Some((PatternChar::AltDelimiter, letters.tail())),
             l => {
                 let pat = Pattern::Lit(l);
                 Some((PatternChar::Itself(pat), letters.tail()))
@@ -154,7 +197,24 @@ impl<'a> PatternChar<'a> {
     }
 }
 
-pub fn parse_pattern<'a>(expr: &'a str) -> (Vec<Pattern<'a>>, &'a str) {
+#[derive(Debug)]
+pub struct ParsedPatterns<'a> {
+    inner: Vec<Pattern<'a>>,
+    remaining: &'a str,
+    last_char: Option<PatternChar<'a>>,
+}
+
+impl<'a> ParsedPatterns<'a> {
+    pub fn patterns(self) -> Vec<Pattern<'a>> {
+        self.inner
+    }
+
+    pub fn completed(&self) -> bool {
+        self.remaining.is_empty()
+    }
+}
+
+pub fn parse_pattern<'a>(expr: &'a str) -> ParsedPatterns<'a> {
     let mut rest_expr = expr;
     let mut patterns: Vec<Pattern<'a>> = vec![];
 
@@ -185,24 +245,69 @@ pub fn parse_pattern<'a>(expr: &'a str) -> (Vec<Pattern<'a>>, &'a str) {
                 }
             }
             PatternChar::PGroupOpen => {
-                let (inner, remaining) = parse_pattern(rest);
+                let ParsedPatterns {
+                    inner, remaining, ..
+                } = parse_pattern(rest);
                 patterns.push(Pattern::PGroup(inner));
                 rest = remaining;
             }
             PatternChar::NGroupOpen => {
-                let (inner, remaining) = parse_pattern(rest);
+                let ParsedPatterns {
+                    inner, remaining, ..
+                } = parse_pattern(rest);
                 patterns.push(Pattern::NGroup(inner));
                 rest = remaining;
             }
             PatternChar::GroupClose => {
-                return (patterns, rest);
+                return ParsedPatterns {
+                    inner: patterns,
+                    remaining: rest,
+                    last_char: Some(PatternChar::GroupClose),
+                };
+            }
+            PatternChar::AltOpen => {
+                let mut inners: Vec<Vec<Pattern<'a>>> = vec![];
+                let mut parsed = parse_pattern(rest);
+
+                inners.push(parsed.inner);
+                rest = parsed.remaining;
+
+                while parsed
+                    .last_char
+                    .is_some_and(|c| matches!(c, PatternChar::AltDelimiter))
+                {
+                    parsed = parse_pattern(rest);
+
+                    inners.push(parsed.inner);
+                    rest = parsed.remaining;
+                }
+
+                patterns.push(Pattern::Alternation(inners));
+            }
+            PatternChar::AltClose => {
+                return ParsedPatterns {
+                    inner: patterns,
+                    remaining: rest,
+                    last_char: Some(PatternChar::AltClose),
+                };
+            }
+            PatternChar::AltDelimiter => {
+                return ParsedPatterns {
+                    inner: patterns,
+                    remaining: rest,
+                    last_char: Some(PatternChar::AltDelimiter),
+                };
             }
         }
 
         rest_expr = rest;
     }
 
-    (patterns, rest_expr)
+    ParsedPatterns {
+        inner: patterns,
+        remaining: rest_expr,
+        last_char: None,
+    }
 }
 
 fn is_ascii_alphanumeric(s: &str) -> bool {
@@ -224,143 +329,143 @@ mod tests {
     #[test]
     fn it_parses_lit() {
         let expr = "a";
-        let (patterns, rest) = parse_pattern(expr);
-        assert_eq!(patterns, vec![Pattern::Lit("a")]);
-        assert_eq!(rest, "");
+        let parsed = parse_pattern(expr);
+        assert_eq!(parsed.inner, vec![Pattern::Lit("a")]);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_alphanumeric() {
         let expr = "\\w";
-        let (patterns, rest) = parse_pattern(expr);
-        assert_eq!(patterns, vec![Pattern::AlphaNumeric]);
-        assert_eq!(rest, "");
+        let parsed = parse_pattern(expr);
+        assert_eq!(parsed.inner, vec![Pattern::AlphaNumeric]);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_digit() {
         let expr = "\\d";
-        let (patterns, rest) = parse_pattern(expr);
-        assert_eq!(patterns, vec![Pattern::Digit]);
-        assert_eq!(rest, "");
+        let parsed = parse_pattern(expr);
+        assert_eq!(parsed.inner, vec![Pattern::Digit]);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_wildcard() {
         let expr = ".";
-        let (patterns, rest) = parse_pattern(expr);
-        assert_eq!(patterns, vec![Pattern::Wildcard]);
-        assert_eq!(rest, "");
+        let parsed = parse_pattern(expr);
+        assert_eq!(parsed.inner, vec![Pattern::Wildcard]);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_positive_group() {
         let expr = "[abc]";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::Lit("b"),
             Pattern::Lit("c"),
         ])];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_negative_group() {
         let expr = "[^xyz]";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::NGroup(vec![
             Pattern::Lit("x"),
             Pattern::Lit("y"),
             Pattern::Lit("z"),
         ])];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_more_than_one_pattern() {
         let expr = "\\w+";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::MoreThanOne(Box::new(Pattern::AlphaNumeric))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
 
         let expr = "[abc]+";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::MoreThanOne(Box::new(Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::Lit("b"),
             Pattern::Lit("c"),
         ])))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_more_than_zero_pattern() {
         let expr = "\\w*";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::MoreThanZero(Box::new(Pattern::AlphaNumeric))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
 
         let expr = "[abc]*";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::MoreThanZero(Box::new(Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::Lit("b"),
             Pattern::Lit("c"),
         ])))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_zero_or_one_pattern() {
         let expr = "\\w?";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::ZeroOrOne(Box::new(Pattern::AlphaNumeric))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
 
         let expr = "[abc]?";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::ZeroOrOne(Box::new(Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::Lit("b"),
             Pattern::Lit("c"),
         ])))];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_nested_group() {
         let expr = "[a[bc]]";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::PGroup(vec![Pattern::Lit("b"), Pattern::Lit("c")]),
         ])];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
 
         let expr = "[a[^bc]]";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![Pattern::PGroup(vec![
             Pattern::Lit("a"),
             Pattern::NGroup(vec![Pattern::Lit("b"), Pattern::Lit("c")]),
         ])];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 
     #[test]
     fn it_parses_multiple_patterns() {
         let expr = "\\d apple";
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
         let expected = vec![
             Pattern::Digit,
             Pattern::Lit(" "),
@@ -370,7 +475,19 @@ mod tests {
             Pattern::Lit("l"),
             Pattern::Lit("e"),
         ];
-        assert_eq!(patterns, expected);
-        assert_eq!(rest, "");
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
+    }
+
+    #[test]
+    fn it_parses_alternations() {
+        let expr = "(cat|dog)";
+        let parsed = parse_pattern(expr);
+        let expected = vec![Pattern::Alternation(vec![
+            vec![Pattern::Lit("c"), Pattern::Lit("a"), Pattern::Lit("t")],
+            vec![Pattern::Lit("d"), Pattern::Lit("o"), Pattern::Lit("g")],
+        ])];
+        assert_eq!(parsed.inner, expected);
+        assert_eq!(parsed.remaining, "");
     }
 }

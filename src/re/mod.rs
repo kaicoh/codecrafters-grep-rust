@@ -2,7 +2,7 @@ mod letter;
 mod pattern;
 
 use letter::Letters;
-use pattern::{parse_pattern, Pattern};
+use pattern::{parse_pattern, search_match_size, Pattern};
 
 #[derive(Debug, PartialEq)]
 pub struct Regex<'a> {
@@ -23,24 +23,23 @@ impl<'a> Regex<'a> {
             expr
         };
 
-        let (patterns, rest) = parse_pattern(expr);
+        let parsed = parse_pattern(expr);
 
         // TODO:
         // Error handling when rest is not empty
-        if !rest.is_empty() {
+        if !parsed.completed() {
             panic!("Cannot parse regexp completely!");
         }
 
         Self {
             start_anchor,
             end_anchor,
-            patterns,
+            patterns: parsed.patterns(),
         }
     }
 
     pub fn is_match(&self, s: &str) -> bool {
         let mut cur_pos: usize = 0;
-        let mut prev_pat: Option<&Pattern<'a>> = None;
 
         if !self.start_anchor {
             // Search the first position
@@ -51,54 +50,16 @@ impl<'a> Regex<'a> {
                 }
             };
         }
-
-        for pat in self.patterns.iter() {
-            if cur_pos > s.len() {
+        let s = &s[cur_pos..];
+        let matched_pos = match search_match_size(&self.patterns, s) {
+            Some(size) => size,
+            None => {
                 return false;
             }
-
-            if pat.evaluate_with_next() {
-                prev_pat = Some(pat);
-                continue;
-            }
-
-            if let Some(prev) = prev_pat.take() {
-                match pat
-                    .search_match_pos(&s[cur_pos..])
-                    .and_then(|bytes| prev.match_size(&s[cur_pos..(cur_pos + bytes)]))
-                {
-                    Some(size) => {
-                        cur_pos += size;
-                    }
-                    None => {
-                        return false;
-                    }
-                }
-            }
-
-            match pat.match_size(&s[cur_pos..]) {
-                Some(size) => {
-                    cur_pos += size;
-                }
-                None => {
-                    return false;
-                }
-            }
-        }
-
-        if let Some(pat) = prev_pat.take() {
-            match pat.match_size(&s[cur_pos..]) {
-                Some(size) => {
-                    cur_pos += size;
-                }
-                None => {
-                    return false;
-                }
-            }
-        }
+        };
 
         if self.end_anchor {
-            return cur_pos == s.len();
+            return matched_pos == s.len();
         }
 
         true
@@ -195,5 +156,13 @@ mod tests {
         assert!(r.is_match("dog"));
         assert!(r.is_match("dogs"));
         assert!(!r.is_match("cat"));
+    }
+
+    #[test]
+    fn it_matches_alternation() {
+        let r = Regex::new("(dog|cat)");
+        assert!(r.is_match("dog"));
+        assert!(r.is_match("cat"));
+        assert!(!r.is_match("dig"));
     }
 }
